@@ -61,6 +61,26 @@ impl World {
         }
     }
 
+    pub fn get_block_global(&self, x: i32, y: i32, z: i32) -> Voxel {
+        if y < 0 || y >= Chunk::HEIGHT as i32 {
+            return Voxel::Air;
+        }
+
+        let chunk_x = (x as f32 / Chunk::WIDTH as f32).floor() as i32 * Chunk::WIDTH as i32;
+        let chunk_z = (z as f32 / Chunk::DEPTH as f32).floor() as i32 * Chunk::DEPTH as i32;
+
+        if let Some(chunk) = self.chunks.get(&(chunk_x, chunk_z)) {
+            let local_x = (x - chunk_x) as usize;
+            let local_z = (z - chunk_z) as usize;
+
+            if let Some(voxel) = chunk.get_block(Point3::new(local_x, y as usize, local_z)) {
+                return *voxel;
+            }
+        }
+
+        Voxel::Sandstone
+    }
+
     fn missing_chunks(&self, pos: Point3<f32>, radius: i32) -> Vec<(i32, i32)> {
         let cx = (pos.x / Chunk::WIDTH as f32).floor() as i32;
         let cz = (pos.z / Chunk::DEPTH as f32).floor() as i32;

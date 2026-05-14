@@ -5,7 +5,10 @@ use crate::app::*;
 mod app;
 mod camera;
 mod events;
+mod physics;
+mod player;
 mod renderer;
+mod scheduler;
 mod world;
 
 fn main() -> anyhow::Result<()> {

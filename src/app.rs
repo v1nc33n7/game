@@ -1,10 +1,14 @@
 use crate::events::EngineEvent;
-use crate::events::EventScheduler;
+use crate::physics::PhysicsSystem;
+use crate::player::Player;
+use crate::player::PlayerInput;
+use crate::scheduler::TaskScheduler;
 use std::sync::mpsc;
 
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 
+use instant::Instant;
 use winit::event::{ElementState, MouseButton};
 use winit::event_loop::ActiveEventLoop;
 use winit::{application::ApplicationHandler, event::WindowEvent};
@@ -16,10 +20,14 @@ use crate::world::World;
 pub struct App {
     event_sender: Sender<EngineEvent>,
     event_receiver: Receiver<EngineEvent>,
-    event_scheduler: EventScheduler,
+    task_scheduler: TaskScheduler,
     world: World,
     renderer: Option<Renderer>,
     camera: Camera,
+    player: Player,
+    player_input: PlayerInput,
+    physics_system: PhysicsSystem,
+    last_frame: Instant,
 }
 
 impl App {
@@ -29,9 +37,13 @@ impl App {
             event_sender: tx.clone(),
             event_receiver: rx,
             world: World::new(0),
-            event_scheduler: EventScheduler::new(tx),
+            task_scheduler: TaskScheduler::new(tx),
             renderer: None,
             camera: Camera::default(),
+            player: Player::default(),
+            player_input: PlayerInput::default(),
+            physics_system: PhysicsSystem::default(),
+            last_frame: Instant::now(),
         }
     }
 
@@ -46,9 +58,37 @@ impl App {
                         renderer.add_mesh(&vertices, &indices);
                     }
                 }
-                ev @ EngineEvent::ChunkRequested { .. } | ev @ EngineEvent::MeshRequested(..) => {
-                    self.event_scheduler.handle_event(ev);
+                EngineEvent::CameraResized { width, height } => {
+                    self.camera.aspect = width as f32 / height as f32;
                 }
+                EngineEvent::PlayerUpdateRequested {
+                    input_vector,
+                    dt,
+                    move_up,
+                } => {
+                    self.player.velocity.x = input_vector.x * self.player.speed;
+                    self.player.velocity.z = input_vector.z * self.player.speed;
+
+                    if move_up && self.player.on_ground {
+                        self.player.velocity.y = self.player.move_up_force;
+                    }
+
+                    self.physics_system.step_entity(
+                        &self.world,
+                        &mut self.player.position,
+                        &mut self.player.velocity,
+                        &self.player.size,
+                        &mut self.player.on_ground,
+                        dt,
+                    );
+
+                    self.camera.target = self.player.position;
+                }
+                EngineEvent::CameraRotateRequested { dx, dy } => {
+                    self.camera.handle_mouse(dx, dy);
+                }
+
+                ev => self.task_scheduler.handle_event(ev),
             }
         }
     }
@@ -67,46 +107,56 @@ impl ApplicationHandler for App {
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            log::warn!("Renderer not initialized yet");
-            return;
-        };
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("The close button was pressed, stopping");
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                self.camera.update();
+                let now = Instant::now();
+                let dt = now.duration_since(self.last_frame).as_secs_f32();
+                self.last_frame = now;
 
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.update_camera(CameraUniform::new(self.camera.build_view()));
-                }
-
-                self.world
-                    .request_needed_chunks(self.camera.eye, &self.event_sender);
+                let input_vector = self.player_input.get_vector(self.camera.yaw);
+                let _ = self.event_sender.send(EngineEvent::PlayerUpdateRequested {
+                    input_vector,
+                    dt,
+                    move_up: self.player_input.space,
+                });
 
                 self.process_events();
 
                 if let Some(renderer) = &mut self.renderer {
+                    renderer.update_camera(CameraUniform::new(self.camera.build_view()));
+                    self.world
+                        .request_needed_chunks(self.player.position, &self.event_sender);
                     let _ = renderer.render();
                     renderer.request_redraw();
                 }
             }
             WindowEvent::Resized(size) => {
-                renderer.resize(size);
+                if let Some(r) = &mut self.renderer {
+                    r.resize(size);
+                }
+                let _ = self.event_sender.send(EngineEvent::CameraResized {
+                    width: size.width,
+                    height: size.height,
+                });
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
                 ..
             } => {
-                let window = &renderer.window;
-                window.set_cursor_visible(false);
-                let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Locked);
+                if let Some(r) = &self.renderer {
+                    let _ = r
+                        .window
+                        .set_cursor_grab(winit::window::CursorGrabMode::Locked);
+                    r.window.set_cursor_visible(false);
+                }
             }
-            event => {
-                self.camera.handle_input(&event);
+            ev => {
+                self.player_input.handle_input(&ev);
             }
         }
     }
@@ -118,7 +168,10 @@ impl ApplicationHandler for App {
         event: winit::event::DeviceEvent,
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta } = event {
-            self.camera.handle_mouse(delta.0, delta.1);
+            let _ = self.event_sender.send(EngineEvent::CameraRotateRequested {
+                dx: delta.0,
+                dy: delta.1,
+            });
         }
     }
 }
