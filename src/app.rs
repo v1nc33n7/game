@@ -1,38 +1,43 @@
+use rayon::prelude::*;
+use std::sync::mpsc::{self, Receiver, Sender};
+
+pub use instant::Instant;
+use winit::application::ApplicationHandler;
+use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
+use winit::window::{CursorGrabMode, WindowId};
+
+use crate::assets::create_cube_mesh;
+use crate::camera::*;
+use crate::entity::Entity;
 use crate::events::EngineEvent;
 use crate::physics::PhysicsSystem;
-use crate::player::Player;
-use crate::player::PlayerInput;
+use crate::player::{Player, PlayerInput};
+use crate::renderer::{CameraUniform, Renderer};
 use crate::scheduler::TaskScheduler;
-use std::sync::mpsc;
-
-use std::sync::mpsc::Receiver;
-use std::sync::mpsc::Sender;
-
-use instant::Instant;
-use winit::event::{ElementState, MouseButton};
-use winit::event_loop::ActiveEventLoop;
-use winit::{application::ApplicationHandler, event::WindowEvent};
-
-use crate::camera::*;
-use crate::renderer::*;
 use crate::world::World;
 
 pub struct App {
     event_sender: Sender<EngineEvent>,
     event_receiver: Receiver<EngineEvent>,
     task_scheduler: TaskScheduler,
+
     world: World,
+    player: Player,
+    entities: Vec<Box<dyn Entity + Send + Sync>>,
+    physics_system: PhysicsSystem,
+
     renderer: Option<Renderer>,
     camera: Camera,
-    player: Player,
     player_input: PlayerInput,
-    physics_system: PhysicsSystem,
+
     last_frame: Instant,
 }
 
 impl App {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
+
         App {
             event_sender: tx.clone(),
             event_receiver: rx,
@@ -41,6 +46,7 @@ impl App {
             renderer: None,
             camera: Camera::default(),
             player: Player::default(),
+            entities: Vec::new(),
             player_input: PlayerInput::default(),
             physics_system: PhysicsSystem::default(),
             last_frame: Instant::now(),
@@ -51,43 +57,20 @@ impl App {
         while let Ok(event) = self.event_receiver.try_recv() {
             match event {
                 EngineEvent::ChunkGenerated(chunk) => {
-                    self.world.handle_new_chunk(chunk, &self.event_sender);
+                    let mesh_requests = self.world.handle_new_chunk(chunk);
+                    for (center, neighbors) in mesh_requests {
+                        let _ = self
+                            .event_sender
+                            .send(EngineEvent::MeshRequested(center, neighbors));
+                    }
                 }
                 EngineEvent::MeshGenerated { vertices, indices } => {
-                    if let Some(renderer) = &mut self.renderer {
-                        renderer.add_mesh(&vertices, &indices);
+                    if let Some(renderer) = &mut self.renderer
+                        && let Some(chunk_mesh) = renderer.create_vertex_buffer(&vertices, &indices)
+                    {
+                        renderer.chunk_meshes.insert(chunk_mesh);
                     }
                 }
-                EngineEvent::CameraResized { width, height } => {
-                    self.camera.aspect = width as f32 / height as f32;
-                }
-                EngineEvent::PlayerUpdateRequested {
-                    input_vector,
-                    dt,
-                    move_up,
-                } => {
-                    self.player.velocity.x = input_vector.x * self.player.speed;
-                    self.player.velocity.z = input_vector.z * self.player.speed;
-
-                    if move_up && self.player.on_ground {
-                        self.player.velocity.y = self.player.move_up_force;
-                    }
-
-                    self.physics_system.step_entity(
-                        &self.world,
-                        &mut self.player.position,
-                        &mut self.player.velocity,
-                        &self.player.size,
-                        &mut self.player.on_ground,
-                        dt,
-                    );
-
-                    self.camera.target = self.player.position;
-                }
-                EngineEvent::CameraRotateRequested { dx, dy } => {
-                    self.camera.handle_mouse(dx, dy);
-                }
-
                 ev => self.task_scheduler.handle_event(ev),
             }
         }
@@ -95,17 +78,21 @@ impl App {
 }
 
 impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let renderer =
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let mut renderer =
             pollster::block_on(Renderer::init(event_loop)).expect("Failed to initialize renderer");
+
+        let (cube_verts, cube_idxs) = create_cube_mesh(1.0, 2.0, 1.0);
+        renderer.register_model_asset("cube", &cube_verts, &cube_idxs);
+
         self.renderer = Some(renderer);
     }
 
     fn window_event(
         &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: winit::event::WindowEvent,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
     ) {
         match event {
             WindowEvent::CloseRequested => {
@@ -117,19 +104,40 @@ impl ApplicationHandler for App {
                 let dt = now.duration_since(self.last_frame).as_secs_f32();
                 self.last_frame = now;
 
-                let input_vector = self.player_input.get_vector(self.camera.yaw);
-                let _ = self.event_sender.send(EngineEvent::PlayerUpdateRequested {
-                    input_vector,
-                    dt,
-                    move_up: self.player_input.space,
-                });
-
                 self.process_events();
 
+                let input_vector = self.player_input.get_vector(self.camera.yaw);
+                self.player
+                    .apply_velocity(input_vector, self.player_input.space);
+                self.player.update(dt, &self.world, &self.physics_system);
+
+                self.camera.target = self.player.position();
+
+                self.entities.par_iter_mut().for_each(|entity| {
+                    entity.update(dt, &self.world, &self.physics_system);
+                });
+
                 if let Some(renderer) = &mut self.renderer {
+                    renderer.update_entity_transform(self.player.id(), self.player.get_transform());
+                    renderer.queue_entity_render(self.player.model_id(), self.player.id());
+
+                    for entity in &self.entities {
+                        renderer.update_entity_transform(entity.id(), entity.get_transform());
+                        renderer.queue_entity_render(entity.model_id(), entity.id());
+                    }
+
                     renderer.update_camera(CameraUniform::new(self.camera.build_view()));
-                    self.world
-                        .request_needed_chunks(self.player.position, &self.event_sender);
+
+                    let missing = self.world.get_missing_chunks(self.camera.target);
+                    self.world.mark_in_flight(&missing);
+                    for coord in missing {
+                        let _ = self.event_sender.send(EngineEvent::ChunkRequested {
+                            x: coord.0,
+                            z: coord.1,
+                            generator: self.world.generator.clone(),
+                        });
+                    }
+
                     let _ = renderer.render();
                     renderer.request_redraw();
                 }
@@ -138,10 +146,7 @@ impl ApplicationHandler for App {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size);
                 }
-                let _ = self.event_sender.send(EngineEvent::CameraResized {
-                    width: size.width,
-                    height: size.height,
-                });
+                self.camera.aspect = size.width as f32 / size.height as f32;
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
@@ -149,9 +154,7 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 if let Some(r) = &self.renderer {
-                    let _ = r
-                        .window
-                        .set_cursor_grab(winit::window::CursorGrabMode::Locked);
+                    let _ = r.window.set_cursor_grab(CursorGrabMode::Locked);
                     r.window.set_cursor_visible(false);
                 }
             }
@@ -165,13 +168,11 @@ impl ApplicationHandler for App {
         &mut self,
         _event_loop: &ActiveEventLoop,
         _device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
+        event: DeviceEvent,
     ) {
-        if let winit::event::DeviceEvent::MouseMotion { delta } = event {
-            let _ = self.event_sender.send(EngineEvent::CameraRotateRequested {
-                dx: delta.0,
-                dy: delta.1,
-            });
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.camera.handle_mouse(delta.0, delta.1);
         }
     }
 }
+

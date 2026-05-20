@@ -1,19 +1,16 @@
-use cgmath::Point3;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, mpsc::Sender},
-};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-mod biomes;
-mod chunk;
-mod generator;
-mod voxel;
+use cgmath::Point3;
 
 pub use chunk::{Chunk, ChunkNeighbors};
 pub use generator::Generator;
 pub use voxel::Voxel;
 
-use crate::events::EngineEvent;
+mod biomes;
+mod chunk;
+mod generator;
+mod voxel;
 
 pub struct World {
     pub chunks: HashMap<(i32, i32), Chunk>,
@@ -30,35 +27,33 @@ impl World {
         }
     }
 
-    pub fn request_needed_chunks(
-        &mut self,
-        player_pos: Point3<f32>,
-        event_bus: &Sender<EngineEvent>,
-    ) {
-        let missing = self.missing_chunks(player_pos, 12);
-        for coord in missing {
-            if self.in_flight.insert(coord) {
-                let _ = event_bus.send(EngineEvent::ChunkRequested {
-                    x: coord.0,
-                    z: coord.1,
-                    generator: self.generator.clone(),
-                });
-            }
+    pub fn get_missing_chunks(&mut self, player_pos: Point3<f32>) -> Vec<(i32, i32)> {
+        let mut requested = self.missing_chunks(player_pos, 12);
+        // Retain only the coordinates that are NOT currently in-flight
+        requested.retain(|coord| !self.in_flight.contains(coord));
+        requested
+    }
+
+    pub fn mark_in_flight(&mut self, coords: &[(i32, i32)]) {
+        for coord in coords {
+            self.in_flight.insert(*coord);
         }
     }
 
-    pub fn handle_new_chunk(&mut self, chunk: Chunk, event_bus: &Sender<EngineEvent>) {
+    pub fn handle_new_chunk(&mut self, chunk: Chunk) -> Vec<(Chunk, [Option<Chunk>; 4])> {
         let coord = (chunk.position.x, chunk.position.z);
         self.chunks.insert(coord, chunk.clone());
         self.in_flight.remove(&coord);
 
+        let mut mesh_requests = Vec::new();
         for neighbor_coord in self.get_neighbors_coords(coord.0, coord.1) {
             if let Some((center, neighbors)) =
                 self.get_chunk_and_neighbors(neighbor_coord.0, neighbor_coord.1)
             {
-                let _ = event_bus.send(EngineEvent::MeshRequested(center, neighbors));
+                mesh_requests.push((center, neighbors));
             }
         }
+        mesh_requests
     }
 
     pub fn get_block_global(&self, x: i32, y: i32, z: i32) -> Voxel {
@@ -85,6 +80,7 @@ impl World {
         let cx = (pos.x / Chunk::WIDTH as f32).floor() as i32;
         let cz = (pos.z / Chunk::DEPTH as f32).floor() as i32;
         let mut missing = Vec::new();
+
         for dx in -radius..=radius {
             for dz in -radius..=radius {
                 let coord = (
@@ -121,13 +117,13 @@ impl World {
         let e = self.chunks.get(&(world_x + Chunk::WIDTH as i32, world_z));
         let w = self.chunks.get(&(world_x - Chunk::WIDTH as i32, world_z));
 
-        if n.is_some() && s.is_some() && e.is_some() && w.is_some() {
-            Some((
-                center.clone(),
-                [n.cloned(), s.cloned(), e.cloned(), w.cloned()],
-            ))
-        } else {
-            None
+        if n.is_none() || s.is_none() || e.is_none() || w.is_none() {
+            return None;
         }
+
+        Some((
+            center.clone(),
+            [n.cloned(), s.cloned(), e.cloned(), w.cloned()],
+        ))
     }
 }

@@ -1,10 +1,9 @@
-use crate::events::EngineEvent;
-use crate::renderer::RenderItem;
-use crate::world::Chunk;
-use crate::world::ChunkNeighbors;
-use crate::world::Generator;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
+
+use crate::events::EngineEvent;
+use crate::renderer;
+use crate::world::{Chunk, ChunkNeighbors, Generator};
 
 pub struct TaskScheduler {
     event_bus: Sender<EngineEvent>,
@@ -42,7 +41,7 @@ impl TaskScheduler {
         rayon::spawn(move || {
             let [north, south, east, west] = neighbors;
 
-            let neighbors = ChunkNeighbors {
+            let neighbor_refs = ChunkNeighbors {
                 center: &chunk,
                 north: north.as_ref(),
                 south: south.as_ref(),
@@ -50,9 +49,9 @@ impl TaskScheduler {
                 west: west.as_ref(),
             };
 
-            let (vertices, indices) = RenderItem::Chunk(&chunk, &neighbors).generate_mesh();
-
+            let (vertices, indices) = renderer::generate_chunk_mesh(&neighbor_refs);
             let _ = bus.send(EngineEvent::MeshGenerated { vertices, indices });
         });
     }
 }
+

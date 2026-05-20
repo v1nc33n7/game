@@ -1,20 +1,18 @@
-use std::mem;
-
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    pos: [f32; 3],
-    color: [f32; 3],
+    pub position: [f32; 3],
+    pub color: [f32; 3],
 }
 
 impl Vertex {
-    pub fn new(pos: [f32; 3], color: [f32; 3]) -> Self {
-        Self { pos, color }
+    pub fn new(position: [f32; 3], color: [f32; 3]) -> Self {
+        Self { position, color }
     }
 
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as u64,
+            array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -23,7 +21,7 @@ impl Vertex {
                     format: wgpu::VertexFormat::Float32x3,
                 },
                 wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 3]>() as u64,
+                    offset: std::mem::size_of::<[f32; 3]>() as u64,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
                 },

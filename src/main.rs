@@ -3,7 +3,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use crate::app::*;
 
 mod app;
+mod assets;
 mod camera;
+mod entity;
 mod events;
 mod physics;
 mod player;

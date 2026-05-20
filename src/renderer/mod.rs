@@ -1,31 +1,35 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 use wgpu::{CommandEncoder, SurfaceTexture, TextureView};
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
 
-use camera_uniform::*;
+use crate::renderer::uniforms::UniformBindGroup;
 use context::*;
 use pipelines::*;
 
-mod camera_uniform;
 mod context;
-mod mesher;
 mod pipelines;
-mod vertex;
+mod uniforms;
+mod vertices;
 
-pub use camera_uniform::CameraUniform;
-pub use mesher::MeshBuffer;
-pub use mesher::RenderItem;
-pub use vertex::Vertex;
+pub use uniforms::{CameraUniform, EntityUniform};
+pub use vertices::{MeshBuffer, Vertex, generate_chunk_mesh};
 
 pub struct Renderer {
-    gpu_context: GpuContext,
+    pub gpu_context: GpuContext,
     pub window: Arc<Window>,
-    pipelines: Vec<Pipeline>,
-    camera_binding_group: CameraBindGroup,
-    mesh_buffers: HashSet<MeshBuffer>,
+
+    pub entity_pipeline: EntityPipeline,
+    pub world_pipeline: WorldPipeline,
+
+    pub camera_binding_group: UniformBindGroup,
+
+    pub chunk_meshes: HashSet<MeshBuffer>,
+    pub entity_bind_groups: HashMap<usize, UniformBindGroup>,
+    pub model_assets: HashMap<&'static str, MeshBuffer>,
+
+    pub entity_render_queue: Vec<(&'static str, usize)>,
 }
 
 impl Renderer {
@@ -34,50 +38,69 @@ impl Renderer {
             .with_title("Game")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = Arc::new(event_loop.create_window(window_attributes)?);
-        let ctx = GpuContext::new(event_loop.owned_display_handle(), Arc::clone(&window)).await?;
-        let camera_binding_group = CameraBindGroup::new(&ctx);
-        let pipelines = vec![Pipeline::Voxel(VoxelPipeline::new(
-            &ctx,
-            &camera_binding_group.layout,
-        ))];
+        let gpu_context =
+            GpuContext::new(event_loop.owned_display_handle(), Arc::clone(&window)).await?;
+
+        let camera_binding_group =
+            UniformBindGroup::new(&gpu_context, std::mem::size_of::<CameraUniform>() as u64);
+        let entity_binding_group =
+            UniformBindGroup::new(&gpu_context, std::mem::size_of::<EntityUniform>() as u64);
+
+        let world_pipeline =
+            WorldPipeline::new(&gpu_context, &camera_binding_group.bind_group_layout);
+        let entity_pipeline = EntityPipeline::new(
+            &gpu_context,
+            &camera_binding_group.bind_group_layout,
+            &entity_binding_group.bind_group_layout,
+        );
 
         let renderer = Self {
-            gpu_context: ctx,
+            gpu_context,
             window,
-            pipelines,
             camera_binding_group,
-            mesh_buffers: HashSet::new(),
+            chunk_meshes: HashSet::new(),
+            entity_bind_groups: HashMap::new(),
+            world_pipeline,
+            entity_pipeline,
+            model_assets: HashMap::new(),
+            entity_render_queue: Vec::new(),
         };
 
         renderer.configure_surface();
         Ok(renderer)
     }
 
-    pub fn add_mesh(&mut self, vertices: &[Vertex], indices: &[u32]) {
-        if vertices.is_empty() {
-            return;
+    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        self.gpu_context.config.width = new_size.width;
+        self.gpu_context.config.height = new_size.height;
+        self.configure_surface();
+        self.gpu_context.new_depth_texture();
+    }
+
+    fn configure_surface(&self) {
+        self.gpu_context
+            .surface
+            .configure(&self.gpu_context.device, &self.gpu_context.config);
+    }
+
+    pub fn create_vertex_buffer<T: bytemuck::Pod>(
+        &self,
+        vertices: &[T],
+        indices: &[u32],
+    ) -> Option<MeshBuffer> {
+        (!vertices.is_empty() && !indices.is_empty())
+            .then(|| MeshBuffer::new(&self.gpu_context, vertices, indices))
+    }
+
+    pub fn register_model_asset(
+        &mut self,
+        name: &'static str,
+        vertices: &[Vertex],
+        indices: &[u32],
+    ) {
+        if let Some(mesh) = self.create_vertex_buffer(vertices, indices) {
+            self.model_assets.insert(name, mesh);
         }
-
-        let vertex_buf =
-            self.gpu_context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Mesh Vertex Buffer"),
-                    contents: bytemuck::cast_slice(vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-
-        let index_buf =
-            self.gpu_context
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Mesh Index Buffer"),
-                    contents: bytemuck::cast_slice(indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-
-        self.mesh_buffers
-            .insert(MeshBuffer::new(vertex_buf, index_buf, indices.len() as u32));
     }
 
     pub fn update_camera(&self, view: CameraUniform) {
@@ -86,6 +109,29 @@ impl Renderer {
             0,
             bytemuck::bytes_of(&view),
         );
+    }
+
+    pub fn update_entity_transform(&mut self, entity_id: usize, transform: [[f32; 4]; 4]) {
+        let uniform = EntityUniform::new(transform);
+
+        let bind_group = self.entity_bind_groups.entry(entity_id).or_insert_with(|| {
+            UniformBindGroup::new(
+                &self.gpu_context,
+                std::mem::size_of::<EntityUniform>() as u64,
+            )
+        });
+
+        self.gpu_context
+            .queue
+            .write_buffer(&bind_group.buffer, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    pub fn queue_entity_render(&mut self, model_id: &'static str, entity_id: usize) {
+        self.entity_render_queue.push((model_id, entity_id));
+    }
+
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
     }
 
     pub fn render(&mut self) -> anyhow::Result<()> {
@@ -109,36 +155,14 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        self.gpu_context.config.width = new_size.width;
-        self.gpu_context.config.height = new_size.height;
-        self.configure_surface();
-        self.gpu_context.new_depth_texture();
-    }
-
-    pub fn request_redraw(&self) {
-        self.window.request_redraw();
-    }
-
-    fn configure_surface(&self) {
-        self.gpu_context
-            .surface
-            .configure(&self.gpu_context.device, &self.gpu_context.config);
-    }
-
     fn acquire_frame(&mut self) -> Option<SurfaceTexture> {
         match self.gpu_context.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(surface_texture) => Some(surface_texture),
-            wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
-                drop(surface_texture);
+            wgpu::CurrentSurfaceTexture::Suboptimal(_) | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.configure_surface();
                 None
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => None,
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.configure_surface();
-                None
-            }
             wgpu::CurrentSurfaceTexture::Lost => {
                 match self
                     .gpu_context
@@ -195,16 +219,19 @@ impl Renderer {
             multiview_mask: None,
         });
 
-        for pipeline in &self.pipelines {
-            for mesh in &self.mesh_buffers {
-                pipeline.draw(
-                    &mut pass,
-                    &mesh.vertex_buffer,
-                    &mesh.index_buffer,
-                    mesh.index_count,
-                    &self.camera_binding_group.bind_group,
-                );
-            }
-        }
+        self.world_pipeline.draw(
+            &mut pass,
+            &self.camera_binding_group.bind_group,
+            &self.chunk_meshes,
+        );
+
+        self.entity_pipeline.draw(
+            &mut pass,
+            &self.camera_binding_group.bind_group,
+            &self.model_assets,
+            &self.entity_bind_groups,
+            &self.entity_render_queue,
+        );
     }
 }
+
