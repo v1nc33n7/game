@@ -1,3 +1,4 @@
+use cgmath::Point3;
 use rayon::prelude::*;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -7,12 +8,11 @@ use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorGrabMode, WindowId};
 
-use crate::assets::create_cube_mesh;
+use crate::assets::AssetManager;
 use crate::camera::*;
-use crate::entity::Entity;
+use crate::entities::{Enemy, Entity, Player, PlayerInput};
 use crate::events::EngineEvent;
 use crate::physics::PhysicsSystem;
-use crate::player::{Player, PlayerInput};
 use crate::renderer::{CameraUniform, Renderer};
 use crate::scheduler::TaskScheduler;
 use crate::world::World;
@@ -38,6 +38,11 @@ impl App {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
 
+        let entities: Vec<Box<dyn Entity + Send + Sync>> = vec![
+            Box::new(Enemy::new(1, Point3::new(50.0, 120.0, 50.0))),
+            Box::new(Enemy::new(2, Point3::new(60.0, 120.0, 55.0))),
+        ];
+
         App {
             event_sender: tx.clone(),
             event_receiver: rx,
@@ -46,7 +51,7 @@ impl App {
             renderer: None,
             camera: Camera::default(),
             player: Player::default(),
-            entities: Vec::new(),
+            entities,
             player_input: PlayerInput::default(),
             physics_system: PhysicsSystem::default(),
             last_frame: Instant::now(),
@@ -82,8 +87,7 @@ impl ApplicationHandler for App {
         let mut renderer =
             pollster::block_on(Renderer::init(event_loop)).expect("Failed to initialize renderer");
 
-        let (cube_verts, cube_idxs) = create_cube_mesh(1.0, 2.0, 1.0);
-        renderer.register_model_asset("cube", &cube_verts, &cube_idxs);
+        AssetManager::load_static_assets(&mut renderer);
 
         self.renderer = Some(renderer);
     }
@@ -112,6 +116,10 @@ impl ApplicationHandler for App {
                 self.player.update(dt, &self.world, &self.physics_system);
 
                 self.camera.target = self.player.position();
+
+                for entity in &mut self.entities {
+                    entity.set_target_position(self.player.position());
+                }
 
                 self.entities.par_iter_mut().for_each(|entity| {
                     entity.update(dt, &self.world, &self.physics_system);
@@ -175,4 +183,3 @@ impl ApplicationHandler for App {
         }
     }
 }
-

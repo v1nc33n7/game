@@ -1,9 +1,6 @@
 use cgmath::{EuclideanSpace, Matrix4, Point3, Vector3};
 
-mod input;
-pub use input::PlayerInput;
-
-use crate::entity::Entity;
+use crate::entities::Entity;
 
 #[derive(Clone)]
 pub struct Player {
@@ -18,9 +15,9 @@ pub struct Player {
 impl Default for Player {
     fn default() -> Self {
         Self {
-            position: Point3::new(50.0, 70.0, 50.0),
+            position: Point3::new(50.0, 120.0, 50.0),
             velocity: Vector3::new(0.0, 0.0, 0.0),
-            size: Vector3::new(0.6, 1.8, 0.6),
+            size: Vector3::new(1.0, 2.0, 1.0),
             speed: 15.0,
             move_up_force: 10.0,
             on_ground: false,
