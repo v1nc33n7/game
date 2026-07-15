@@ -62,6 +62,7 @@ impl PhysicsSystem {
                         if Self::is_colliding(world, &step, size) {
                             *position = Point3::new(step.x, y.floor() + 1.0, step.z);
                             *on_ground = true;
+                            velocity.y = 0.0;
                             return;
                         }
                         y -= 0.02;

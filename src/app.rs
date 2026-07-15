@@ -108,7 +108,7 @@ impl App {
                 &mut transform.on_ground,
                 dt,
             );
-            self.camera.target = transform.position;
+            self.camera.follow(transform.position, dt);
         }
 
         let player_pos = self.camera.target;

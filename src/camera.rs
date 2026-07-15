@@ -20,6 +20,7 @@ pub struct Camera {
     pub yaw: f32,
     pub pitch: f32,
     pub sensitivity: f32,
+    pub follow_speed: f32,
 }
 
 impl Default for Camera {
@@ -35,6 +36,7 @@ impl Default for Camera {
             yaw: -std::f32::consts::PI,
             pitch: 0.5,
             sensitivity: 0.003,
+            follow_speed: 12.0,
         }
     }
 }
@@ -67,5 +69,18 @@ impl Camera {
         let limit = std::f32::consts::FRAC_PI_2 - 0.01;
 
         self.pitch = self.pitch.clamp(-limit, limit);
+    }
+
+    pub fn follow(&mut self, position: Point3<f32>, dt: f32) {
+        self.target.x = position.x;
+        self.target.z = position.z;
+
+        let y_diff = position.y - self.target.y;
+        if y_diff.abs() > 10.0 {
+            self.target.y = position.y;
+        } else {
+            let smoothing = 1.0 - (-self.follow_speed * dt).exp();
+            self.target.y += y_diff * smoothing;
+        }
     }
 }
