@@ -5,36 +5,30 @@ use crate::{
     ecs::{Entities, Entity},
 };
 
-pub fn spawn_player(entities: &mut Entities, position: Point3<f32>) -> Entity {
-    let id = entities.spawn();
-    entities.transforms.insert(
-        id,
-        Transform::new(
-            position,
-            Vector3::zero(),
-            Vector3::new(1.0, 2.0, 1.0),
-            false,
-        ),
-    );
-    entities
-        .player_stats
-        .insert(id, PlayerStats::new(15.0, 10.0));
-    entities.model_ids.insert(id, "cube");
-    id
-}
+impl Entities {
+    pub fn spawn_player(&mut self, position: Point3<f32>) -> Entity {
+        self.spawn_builder()
+            .with_transform(Transform::new(
+                position,
+                Vector3::zero(),
+                Vector3::new(1.0, 2.0, 1.0),
+                false,
+            ))
+            .with_model_id("cube")
+            .with_player_stats(PlayerStats::new(16.0, 10.0))
+            .id()
+    }
 
-pub fn spawn_enemy(entities: &mut Entities, position: Point3<f32>) -> Entity {
-    let id = entities.spawn();
-    entities.transforms.insert(
-        id,
-        Transform::new(
-            position,
-            Vector3::zero(),
-            Vector3::new(0.6, 0.6, 0.6),
-            false,
-        ),
-    );
-    entities.ai.insert(id, EnemyAi::new(position, 4.0));
-    entities.model_ids.insert(id, "small_cube");
-    id
+    pub fn spawn_enemy(&mut self, position: Point3<f32>) -> Entity {
+        self.spawn_builder()
+            .with_transform(Transform::new(
+                position,
+                Vector3::zero(),
+                Vector3::new(0.6, 0.6, 0.6),
+                false,
+            ))
+            .with_model_id("small_cube")
+            .with_ai(EnemyAi::new(position, 12.0))
+            .id()
+    }
 }

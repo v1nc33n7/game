@@ -8,7 +8,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorGrabMode, WindowId};
 
 use crate::assets::AssetManager;
-use crate::ecs::{Entities, Entity, spawn_enemy, spawn_player};
+use crate::ecs::{Entities, Entity};
 use crate::events::EngineEvent;
 use crate::input::PlayerInput;
 use crate::renderer::{CameraUniform, Renderer};
@@ -39,9 +39,9 @@ impl App {
         let (tx, rx) = mpsc::channel();
 
         let mut entities = Entities::default();
-        let player_id = spawn_player(&mut entities, Point3::new(50.0, 120.0, 50.0));
-        spawn_enemy(&mut entities, Point3::new(50.0, 120.0, 50.0));
-        spawn_enemy(&mut entities, Point3::new(50.0, 120.0, 50.0));
+        let player_id = entities.spawn_player(Point3::new(50.0, 120.0, 50.0));
+        entities.spawn_enemy(Point3::new(50.0, 120.0, 50.0));
+        entities.spawn_enemy(Point3::new(50.0, 120.0, 50.0));
 
         App {
             event_sender: tx.clone(),
