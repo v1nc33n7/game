@@ -29,7 +29,6 @@ impl World {
 
     pub fn get_missing_chunks(&mut self, player_pos: Point3<f32>) -> Vec<(i32, i32)> {
         let mut requested = self.missing_chunks(player_pos, 12);
-        // Retain only the coordinates that are NOT currently in-flight
         requested.retain(|coord| !self.in_flight.contains(coord));
         requested
     }
@@ -73,7 +72,7 @@ impl World {
             }
         }
 
-        Voxel::Sandstone
+        Voxel::Air
     }
 
     fn missing_chunks(&self, pos: Point3<f32>, radius: i32) -> Vec<(i32, i32)> {

@@ -23,7 +23,13 @@ impl<'a> PipelineBuilder<'a> {
             vertex_buffers: &[],
             bind_group_layouts: &[],
             polygon_mode: wgpu::PolygonMode::Fill,
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
         }
     }
 
@@ -39,17 +45,6 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn bind_group_layouts(mut self, layouts: &'a [Option<&'a wgpu::BindGroupLayout>]) -> Self {
         self.bind_group_layouts = layouts;
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn polygon_mode(mut self, polygon_mode: wgpu::PolygonMode) -> Self {
-        self.polygon_mode = polygon_mode;
-        self
-    }
-
-    pub fn depth_stencil(mut self, depth_stencil: Option<wgpu::DepthStencilState>) -> Self {
-        self.depth_stencil = depth_stencil;
         self
     }
 

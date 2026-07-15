@@ -3,10 +3,8 @@ use crate::renderer::uniforms::builder::UniformBuilder;
 
 mod builder;
 mod camera;
-mod entity;
 
 pub use camera::CameraUniform;
-pub use entity::EntityUniform;
 
 pub struct UniformBindGroup {
     pub buffer: wgpu::Buffer,

@@ -50,8 +50,12 @@ impl TaskScheduler {
             };
 
             let (vertices, indices) = renderer::generate_chunk_mesh(&neighbor_refs);
-            let _ = bus.send(EngineEvent::MeshGenerated { vertices, indices });
+            let _ = bus.send(EngineEvent::MeshGenerated {
+                x: chunk.position.x,
+                z: chunk.position.z,
+                vertices,
+                indices,
+            });
         });
     }
 }
-

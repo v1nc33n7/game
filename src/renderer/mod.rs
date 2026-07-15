@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use wgpu::{CommandEncoder, SurfaceTexture, TextureView};
@@ -7,14 +7,15 @@ use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
 use crate::renderer::uniforms::UniformBindGroup;
 use context::*;
 use pipelines::*;
+use wgpu::util::DeviceExt;
 
 mod context;
 mod pipelines;
 mod uniforms;
 mod vertices;
 
-pub use uniforms::{CameraUniform, EntityUniform};
-pub use vertices::{MeshBuffer, Vertex, generate_chunk_mesh};
+pub use uniforms::CameraUniform;
+pub use vertices::{InstanceRaw, MeshBuffer, Vertex, generate_chunk_mesh};
 
 pub struct Renderer {
     pub gpu_context: GpuContext,
@@ -25,8 +26,8 @@ pub struct Renderer {
 
     pub camera_binding_group: UniformBindGroup,
 
-    pub chunk_meshes: HashSet<MeshBuffer>,
-    pub entity_bind_groups: HashMap<usize, UniformBindGroup>,
+    pub chunk_meshes: HashMap<(i32, i32), MeshBuffer>,
+    pub entity_instance_buffers: HashMap<usize, wgpu::Buffer>,
     pub model_assets: HashMap<&'static str, MeshBuffer>,
 
     pub entity_render_queue: Vec<(&'static str, usize)>,
@@ -43,23 +44,18 @@ impl Renderer {
 
         let camera_binding_group =
             UniformBindGroup::new(&gpu_context, std::mem::size_of::<CameraUniform>() as u64);
-        let entity_binding_group =
-            UniformBindGroup::new(&gpu_context, std::mem::size_of::<EntityUniform>() as u64);
 
         let world_pipeline =
             WorldPipeline::new(&gpu_context, &camera_binding_group.bind_group_layout);
-        let entity_pipeline = EntityPipeline::new(
-            &gpu_context,
-            &camera_binding_group.bind_group_layout,
-            &entity_binding_group.bind_group_layout,
-        );
+        let entity_pipeline =
+            EntityPipeline::new(&gpu_context, &camera_binding_group.bind_group_layout);
 
         let renderer = Self {
             gpu_context,
             window,
             camera_binding_group,
-            chunk_meshes: HashSet::new(),
-            entity_bind_groups: HashMap::new(),
+            chunk_meshes: HashMap::new(),
+            entity_instance_buffers: HashMap::new(),
             world_pipeline,
             entity_pipeline,
             model_assets: HashMap::new(),
@@ -112,18 +108,25 @@ impl Renderer {
     }
 
     pub fn update_entity_transform(&mut self, entity_id: usize, transform: [[f32; 4]; 4]) {
-        let uniform = EntityUniform::new(transform);
+        let instance = InstanceRaw::new(transform);
+        let gpu_context = &self.gpu_context;
 
-        let bind_group = self.entity_bind_groups.entry(entity_id).or_insert_with(|| {
-            UniformBindGroup::new(
-                &self.gpu_context,
-                std::mem::size_of::<EntityUniform>() as u64,
-            )
-        });
+        let buffer = self
+            .entity_instance_buffers
+            .entry(entity_id)
+            .or_insert_with(|| {
+                gpu_context
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Entity Instance Buffer"),
+                        contents: bytemuck::bytes_of(&instance),
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    })
+            });
 
-        self.gpu_context
+        gpu_context
             .queue
-            .write_buffer(&bind_group.buffer, 0, bytemuck::bytes_of(&uniform));
+            .write_buffer(buffer, 0, bytemuck::bytes_of(&instance));
     }
 
     pub fn queue_entity_render(&mut self, model_id: &'static str, entity_id: usize) {
@@ -229,7 +232,7 @@ impl Renderer {
             &mut pass,
             &self.camera_binding_group.bind_group,
             &self.model_assets,
-            &self.entity_bind_groups,
+            &self.entity_instance_buffers,
             &self.entity_render_queue,
         );
     }

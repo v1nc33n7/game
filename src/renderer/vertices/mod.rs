@@ -3,12 +3,13 @@ use wgpu::util::DeviceExt;
 
 mod chunk;
 mod face;
+mod instance;
 mod vertex;
 
 pub use chunk::generate_chunk_mesh;
+pub use instance::InstanceRaw;
 pub use vertex::Vertex;
 
-#[derive(PartialEq, Eq, Hash)]
 pub struct MeshBuffer {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,

@@ -41,16 +41,8 @@ pub fn generate_chunk_mesh(neighbors: &ChunkNeighbors) -> (Vec<Vertex>, Vec<u32>
                                 ],
                                 tinted,
                             ));
-
-                            indices.extend_from_slice(&[
-                                idx,
-                                idx + 1,
-                                idx + 2,
-                                idx,
-                                idx + 2,
-                                idx + 3,
-                            ]);
                         }
+                        indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
                     }
                 }
             }

@@ -5,11 +5,13 @@ use crate::app::*;
 mod app;
 mod assets;
 mod camera;
-mod entities;
+mod components;
+mod ecs;
+mod input;
 mod events;
-mod physics;
 mod renderer;
 mod scheduler;
+mod systems;
 mod world;
 
 fn main() -> anyhow::Result<()> {

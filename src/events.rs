@@ -11,6 +11,8 @@ pub enum EngineEvent {
     ChunkGenerated(Chunk),
     MeshRequested(Chunk, [Option<Chunk>; 4]),
     MeshGenerated {
+        x: i32,
+        z: i32,
         vertices: Vec<Vertex>,
         indices: Vec<u32>,
     },

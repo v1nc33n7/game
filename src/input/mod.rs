@@ -7,7 +7,6 @@ pub struct PlayerInput {
     pub a: bool,
     pub s: bool,
     pub d: bool,
-    pub shift: bool,
     pub space: bool,
 }
 
@@ -32,7 +31,7 @@ impl PlayerInput {
         dir
     }
 
-    pub fn handle_input(&mut self, event: &WindowEvent) -> bool {
+    pub fn handle_input(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -47,32 +46,23 @@ impl PlayerInput {
                 match key {
                     KeyCode::KeyW => {
                         self.w = pressed;
-                        true
                     }
                     KeyCode::KeyS => {
                         self.s = pressed;
-                        true
                     }
                     KeyCode::KeyA => {
                         self.a = pressed;
-                        true
                     }
                     KeyCode::KeyD => {
                         self.d = pressed;
-                        true
                     }
                     KeyCode::Space => {
                         self.space = pressed;
-                        true
                     }
-                    KeyCode::ShiftLeft => {
-                        self.shift = pressed;
-                        true
-                    }
-                    _ => false,
+                    _ => (),
                 }
             }
-            _ => false,
+            _ => (),
         }
     }
 }
